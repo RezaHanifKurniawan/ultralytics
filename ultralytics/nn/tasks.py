@@ -37,10 +37,13 @@ from ultralytics.nn.modules import (
     C3Ghost,
     C3k2,
     C3x,
+    SpatialAttention,
+    CBAM,
     CBFuse,
     CBLinear,
     Classify,
     Concat,
+    CoordinateAttention,
     Conv,
     Conv2,
     ConvTranspose,
@@ -1630,6 +1633,9 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            SpatialAttention,
+            CBAM,
+            CoordinateAttention,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
