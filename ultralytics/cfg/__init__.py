@@ -373,30 +373,32 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
     """
     for k, v in cfg.items():
         if v is not None:  # None values may be from optional args
-            # Pengecekan Khusus scale agar bebas: bisa float atau tuple
-            if k == "scale":
-                # Jika user memasukkan tuple/list, izinkan langsung (range absolut)
-                if isinstance(v, (list, tuple)):
-                    if len(v) != 2 or not all(isinstance(x, (int, float)) for x in v):
-                        if hard:
-                            raise TypeError(f"'{k}={v}' harus berisi 2 angka jika berupa tuple.")
-                    continue  # Lolos sebagai tuple, lanjut ke parameter berikutnya
-                
-                # Jika bukan tuple, validasi sebagai float/fraction (0.0 - 1.0)
-                if not isinstance(v, FLOAT_OR_INT):
-                    if hard:
-                        raise TypeError(f"'{k}={v}' harus berupa float atau tuple.")
-                    cfg[k] = v = float(v)
-                if not (0.0 <= v <= 1.0):
-                    raise ValueError(f"'{k}={v}' harus antara 0.0-1.0 jika berupa float tunggal.")
-                continue # Lolos sebagai float, lanjut ke parameter berikutnya
-            elif k in CFG_FLOAT_KEYS and not isinstance(v, FLOAT_OR_INT):
+            if k in CFG_FLOAT_KEYS and not isinstance(v, FLOAT_OR_INT):
                 if hard:
                     raise TypeError(
                         f"'{k}={v}' is of invalid type {type(v).__name__}. "
                         f"Valid '{k}' types are int (i.e. '{k}=0') or float (i.e. '{k}=0.5')"
                     )
                 cfg[k] = float(v)
+            elif k == "scale":
+                if isinstance(v, (list, tuple)):
+                    if len(v) != 2 or not all(isinstance(x, (int, float)) for x in v):
+                        if hard:
+                            raise TypeError(
+                                f"'{k}={v}' is of invalid type {type(v).__name__}. "
+                                f"Valid '{k}' types are int, float, or a tuple/list of two floats (i.e. '{k}=(0.5, 2.0)')"
+                            )
+                        continue
+                    continue
+                elif not isinstance(v, FLOAT_OR_INT):
+                    if hard:
+                        raise TypeError(
+                            f"'{k}={v}' is of invalid type {type(v).__name__}. "
+                            f"Valid '{k}' types are int (i.e. '{k}=0') or float (i.e. '{k}=0.5')"
+                        )
+                    cfg[k] = v = float(v)
+                if not (0.0 <= v <= 1.0):
+                    raise ValueError(f"'{k}={v}' is an invalid value. Valid '{k}' values are between 0.0 and 1.0.")
             elif k in CFG_FRACTION_KEYS:
                 if not isinstance(v, FLOAT_OR_INT):
                     if hard:
