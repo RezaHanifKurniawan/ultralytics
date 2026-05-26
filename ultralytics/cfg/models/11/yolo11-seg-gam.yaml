@@ -29,7 +29,7 @@ backbone:
   - [-1, 1, SPPF, [1024, 5]]           # 9 (Spatial Pyramid Pooling Fast)
   - [-1, 2, C2PSA, [1024]]             # 10 (Backbone Output)
 
-# YOLO11s head + cbam
+# YOLO11s head + gam
 head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 11: Upsample P5 ke resolusi P4
   - [[-1, 6], 1, Concat, [1]]                  # 12: Gabung fitur Head 11 + Backbone P4 (layer 6)
@@ -38,16 +38,17 @@ head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 14: Upsample P4 ke resolusi P3
   - [[-1, 4], 1, Concat, [1]]                  # 15: Gabung fitur Head 14 + Backbone P3 (layer 4)
   - [-1, 2, C3k2, [256, False]]                # 16: Blok konvolusi jalur Neck P3 (P3/8-small)
-  - [-1, 1, CBAM, [7]]                          # 17: Jalur Atensi P3 Aktif (Input ke Segment) (k=7)
+  - [-1, 1, GAM, [7]]                          # 17: Jalur Atensi GAM P3 Aktif (Input ke Segment) (k=7)
 
   - [-1, 1, Conv, [256, 3, 2]]                 # 18: Downsample fitur P3 ke P4
   - [[-1, 13], 1, Concat, [1]]                 # 19: Gabung fitur Head 18 + Neck P4 (layer 13)
   - [-1, 2, C3k2, [512, False]]                # 20: Blok konvolusi jalur Neck P4 (P4/16-medium)
-  - [-1, 1, CBAM, [7]]                          # 21: Jalur Atensi P4 Aktif (Input ke Segment) (k=7)
+  - [-1, 1, GAM, [7]]                          # 21: Jalur Atensi GAM P4 Aktif (Input ke Segment) (k=7)
 
   - [-1, 1, Conv, [512, 3, 2]]                 # 22: Downsample fitur P4 ke P5
   - [[-1, 10], 1, Concat, [1]]                 # 23: Gabung fitur Head 22 + Backbone Output P5 (layer 10)
   - [-1, 2, C3k2, [1024, True]]                # 24: Blok konvolusi jalur Neck P5 (P5/32-large)
-  - [-1, 1, CBAM, [7]]                          # 25: Jalur Atensi P5 Aktif (Input ke Segment) (k=7)
+  - [-1, 1, GAM, [7]]                          # 25: Jalur Atensi GAM P5 Aktif (Input ke Segment) (k=7)
 
   - [[17, 21, 25], 1, Segment, [nc, 32, 256]]  # 26: Segmentasi Masker multi-skala (P3, P4, P5)
+
