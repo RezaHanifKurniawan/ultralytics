@@ -64,7 +64,7 @@ from .conv import (
     CBAM,
     ChannelAttention,
     Concat,
-    CoordinateAttention,
+    CoordAtt,
     Conv,
     Conv2,
     ConvTranspose,
@@ -76,7 +76,7 @@ from .conv import (
     Index,
     LightConv,
     RepConv,
-    SANet,
+    SEBlock,
     SpatialAttention,
 )
 from .head import (

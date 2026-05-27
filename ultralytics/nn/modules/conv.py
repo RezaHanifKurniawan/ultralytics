@@ -8,7 +8,6 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from .activation import h_swish
 
 __all__ = (
     "CBAM",
@@ -17,14 +16,16 @@ __all__ = (
     "Conv",
     "Conv2",
     "ConvTranspose",
-    "CoordinateAttention",
+    "CoordAtt",
     "DWConv",
     "DWConvTranspose2d",
     "Focus",
+    "GAM",
     "GhostConv",
     "Index",
     "LightConv",
     "RepConv",
+    "SEBlock",
     "SpatialAttention",
 )
 
@@ -582,62 +583,153 @@ class SpatialAttention(nn.Module):
         return x * self.act(self.cv1(torch.cat([torch.mean(x, 1, keepdim=True), torch.max(x, 1, keepdim=True)[0]], 1)))
 
 
-class CBAM(nn.Module):
-    """Convolutional Block Attention Module.
+class SEBlock(nn.Module):
+    """Squeeze-and-Excitation (SE) Block.
 
-    Combines channel and spatial attention mechanisms for comprehensive feature refinement.
+    Recalibrates channel-wise feature responses using global context aggregation.
 
     Attributes:
-        channel_attention (ChannelAttention): Channel attention module.
-        spatial_attention (SpatialAttention): Spatial attention module.
+        avg_pool (nn.AdaptiveAvgPool2d): Global average pooling layer.
+        fc (nn.Sequential): Two-layer bottleneck MLP implemented as 1x1 convolutions.
+        act (nn.Sigmoid): Sigmoid activation for channel weights.
+
+    References:
+        Hu et al., 2018 (https://arxiv.org/abs/1709.01507)
     """
 
-    def __init__(self, c1, kernel_size=7):
-        """Initialize CBAM with given parameters.
+    def __init__(self, c1, reduction=16):
+        """Initialize Squeeze-and-Excitation module.
 
         Args:
             c1 (int): Number of input channels.
-            kernel_size (int): Size of the convolutional kernel for spatial attention.
+            reduction (int): Channel reduction ratio. Defaults to 16.
         """
         super().__init__()
-        self.channel_attention = ChannelAttention(c1)
-        self.spatial_attention = SpatialAttention(kernel_size)
+        mid = max(8, c1 // reduction)
+
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(c1, mid, 1, 1, 0, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid, c1, 1, 1, 0, bias=False)
+        )
+        self.act = nn.Sigmoid()
 
     def forward(self, x):
-        """Apply channel and spatial attention sequentially to input tensor.
+        """Apply channel-wise feature recalibration to input tensor.
 
         Args:
             x (torch.Tensor): Input tensor.
 
         Returns:
-            (torch.Tensor): Attended output tensor.
+            (torch.Tensor): Channel-attended output tensor.
         """
-        return self.spatial_attention(self.channel_attention(x))
+        return x * self.act(self.fc(self.avg_pool(x)))
 
 
-class GAM(nn.Module):
-    """Global Attention Module.
+class CBAM(nn.Module):
+    """Convolutional Block Attention Module (CBAM).
 
-    Enhances channel and spatial feature interactions globally without spatial pooling.
+    Sequentially applies channel attention and spatial attention for adaptive feature refinement.
 
     Attributes:
-        channel_attention (ChannelAttention): RTMDet-style channel attention module.
-        spatial_attention (SpatialAttention): Spatial attention module with large receptive field.
+        avg_pool_c (nn.AdaptiveAvgPool2d): Global average pooling for channel attention.
+        max_pool_c (nn.AdaptiveMaxPool2d): Global max pooling for channel attention.
+        shared_mlp (nn.Sequential): Bottleneck architecture for channel feature aggregation.
+        spatial_conv (nn.Conv2d): Large receptive field convolution for spatial maps.
+        act (nn.Sigmoid): Sigmoid activation for attention maps.
+
+    References:
+        Woo et al., 2018 (https://arxiv.org/abs/1807.06521)
     """
 
-    def __init__(self, c1, kernel_size=7):
-        """Initialize GAM with given parameters.
+    def __init__(self, c1, reduction=16, kernel_size=7):
+        """Initialize Convolutional Block Attention Module.
 
         Args:
             c1 (int): Number of input channels.
-            kernel_size (int): Size of the convolutional kernel for spatial attention.
+            reduction (int): Channel reduction ratio for shared MLP. Defaults to 16.
+            kernel_size (int): Size of the convolutional kernel for spatial attention. Defaults to 7.
         """
         super().__init__()
-        self.channel_attention = ChannelAttention(c1)
-        self.spatial_attention = SpatialAttention(kernel_size)
+        mid = max(8, c1 // reduction)
+
+        self.avg_pool_c = nn.AdaptiveAvgPool2d(1)
+        self.max_pool_c = nn.AdaptiveMaxPool2d(1)
+        self.shared_mlp = nn.Sequential(
+            nn.Conv2d(c1, mid, 1, 1, 0, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid, c1, 1, 1, 0, bias=False)
+        )
+
+        assert kernel_size in {3, 7}, "kernel size must be 3 or 7"
+        padding = kernel_size // 2
+        self.spatial_conv = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
+        self.act = nn.Sigmoid()
 
     def forward(self, x):
-        """Apply channel and spatial attention globally to input tensor.
+        """Apply sequential channel and spatial attention refinement to input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            (torch.Tensor): Sequentially refined output tensor.
+        """
+        avg_out = self.shared_mlp(self.avg_pool_c(x))
+        max_out = self.shared_mlp(self.max_pool_c(x))
+        channel_attention = self.act(avg_out + max_out)
+        x_c = x * channel_attention
+
+        avg_spatial = torch.mean(x_c, dim=1, keepdim=True)
+        max_spatial = torch.max(x_c, dim=1, keepdim=True)[0]
+        spatial_attention = self.act(self.spatial_conv(torch.cat([avg_spatial, max_spatial], dim=1)))
+
+        return x_c * spatial_attention
+
+
+class GAM(nn.Module):
+    """Global Attention Mechanism (GAM).
+
+    Preserves global cross-dimension interactions without spatial information loss.
+
+    Attributes:
+        channel_attention (nn.Sequential): Three-dimensional permutation and full-linear MLP.
+        spatial_attention (nn.Sequential): Dual-layer non-pooling convolution module.
+        act (nn.Sigmoid): Sigmoid activation for feature masking.
+
+    References:
+        Liu et al., 2021 (https://arxiv.org/abs/2112.05561)
+    """
+
+    def __init__(self, c1, reduction=16, kernel_size=3):
+        """Initialize Global Attention Mechanism module.
+
+        Args:
+            c1 (int): Number of input channels.
+            reduction (int): Channel reduction ratio. Defaults to 16.
+            kernel_size (int): Receptive field size for spatial adaptation. Defaults to 3.
+        """
+        super().__init__()
+        mid = max(8, c1 // reduction)
+
+        self.channel_attention = nn.Sequential(
+            nn.Linear(c1, mid),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid, c1)
+        )
+
+        self.spatial_attention = nn.Sequential(
+            nn.Conv2d(c1, mid, kernel_size, padding=1, bias=False),
+            nn.BatchNorm2d(mid),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid, c1, kernel_size, padding=1, bias=False),
+            nn.BatchNorm2d(c1)
+        )
+        self.act = nn.Sigmoid()
+
+    def forward(self, x):
+        """Apply global channel-spatial attention interactions to input tensor.
 
         Args:
             x (torch.Tensor): Input tensor.
@@ -645,151 +737,79 @@ class GAM(nn.Module):
         Returns:
             (torch.Tensor): Globally-attended output tensor.
         """
-        x_channel = self.channel_attention(x)
-        return self.spatial_attention(x_channel)
+        b, c, h, w = x.shape
+
+        x_permute = x.permute(0, 2, 3, 1).reshape(b, -1, c)
+        c_att = self.channel_attention(x_permute)
+        c_att = c_att.reshape(b, h, w, c).permute(0, 3, 1, 2)
+        x_c = x * self.act(c_att)
+
+        return x_c * self.act(self.spatial_attention(x_c))
 
 
-
-class SANet(nn.Module):
-    """Shuffle Attention Module.
-
-    Combines channel and spatial attention efficiently using split parallel branches and channel shuffle.
-
-    Attributes:
-        groups (int): Number of feature groups.
-        mid_channels (int): Channel size per group.
-        mid_c (int): Channel size per sub-branch.
-        avg_pool (nn.AdaptiveAvgPool2d): Global average pooling for channel attention.
-        gn_c (nn.GroupNorm): Group normalization for the channel branch.
-        gn_s (nn.GroupNorm): Group normalization for the spatial branch.
-        scale_c (nn.Parameter): Learnable scale parameter for channel attention.
-        shift_c (nn.Parameter): Learnable shift parameter for channel attention.
-        scale_s (nn.Parameter): Learnable scale parameter for spatial attention.
-        shift_s (nn.Parameter): Learnable shift parameter for spatial attention.
-    """
-
-    def __init__(self, channels, groups=8):
-        """Initialize SANet with given parameters.
-
-        Args:
-            channels (int): Number of input channels.
-            groups (int): Number of feature groups for channel splitting.
-        """
-        super().__init__()
-        self.groups = groups
-        self.mid_channels = channels // groups
-        self.mid_c = self.mid_channels // 2
-
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.gn_c = nn.GroupNorm(1, self.mid_c)
-        self.scale_c = nn.Parameter(torch.zeros(1, self.mid_c, 1, 1))
-        self.shift_c = nn.Parameter(torch.ones(1, self.mid_c, 1, 1))
-
-        self.gn_s = nn.GroupNorm(1, self.mid_c)
-        self.scale_s = nn.Parameter(torch.zeros(1, self.mid_c, 1, 1))
-        self.shift_s = nn.Parameter(torch.ones(1, self.mid_c, 1, 1))
-
-    def channel_shuffle(self, x, groups):
-        """Apply channel shuffle operation to interleave features across groups.
-
-        Args:
-            x (torch.Tensor): Input tensor to shuffle.
-            groups (int): Number of groups for shuffling.
-
-        Returns:
-            (torch.Tensor): Shuffled output tensor.
-        """
-        b, c, h, w = x.size()
-        channels_per_group = c // groups
-        x = x.view(b, groups, channels_per_group, h, w)
-        x = x.permute(0, 2, 1, 3, 4).contiguous()
-        return x.view(b, c, h, w)
-
-    def forward(self, x):
-        """Apply shuffle attention via grouped parallel channel and spatial branches.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            (torch.Tensor): Attended and shuffled output tensor.
-        """
-        b, c, h, w = x.size()
-        x = x.view(b * self.groups, self.mid_channels, h, w)
-
-        x_c, x_s = x.chunk(2, dim=1)
-
-        attn_c = self.gn_c(self.avg_pool(x_c)) * self.scale_c + self.shift_c
-        out_c = x_c * torch.sigmoid(attn_c)
-
-        attn_s = self.gn_s(x_s) * self.scale_s + self.shift_s
-        out_s = x_s * torch.sigmoid(attn_s)
-
-        out = torch.cat([out_c, out_s], dim=1).view(b, c, h, w)
-        return self.channel_shuffle(out, self.groups)
-
-
-class CoordinateAttention(nn.Module):
+class CoordAtt(nn.Module):
     """Coordinate Attention Module.
 
-    Embeds positional information into channel attention for efficient mobile network design.
+    Embeds positional coordinate signals into channel attention maps for mobile designs.
 
     Attributes:
-        pool_h (nn.AdaptiveAvgPool2d): 1D vertical coordinate pooling.
-        pool_w (nn.AdaptiveAvgPool2d): 1D horizontal coordinate pooling.
-        conv1 (nn.Conv2d): Shared transformation layer for fused coordinate features.
-        bn1 (nn.BatchNorm2d): Batch normalization for the shared features.
-        act (h_swish): Hard-Swish activation function.
-        conv_h (nn.Conv2d): Convolution layer to generate vertical attention weights.
-        conv_w (nn.Conv2d): Convolution layer to generate horizontal attention weights.
+        pool_h (nn.AdaptiveAvgPool2d): Vertical coordinate-aware feature pooling.
+        pool_w (nn.AdaptiveAvgPool2d): Horizontal coordinate-aware feature pooling.
+        conv1 (nn.Conv2d): Shared transformation layer for unified feature mapping.
+        bn1 (nn.BatchNorm2d): Normalization layer for joint horizontal-vertical features.
+        act (nn.Hardswish): Non-linear activation for unified spatial mappings.
+        conv_h (nn.Conv2d): Directional transformation to isolate vertical channel weights.
+        conv_w (nn.Conv2d): Directional transformation to isolate horizontal channel weights.
+
+    References:
+        Hou et al., 2021 (https://arxiv.org/abs/2103.02907)
     """
 
-    def __init__(self, inp, reduction=16):
-        """Initialize Coordinate Attention with given parameters.
+    def __init__(self, c1, reduction=16):
+        """Initialize Coordinate Attention module.
 
         Args:
             inp (int): Number of input channels.
-            reduction (int): Reduction ratio for the internal bottleneck channel dimension.
+            reduction (int): Downsampling ratio for bottleneck squeeze. Defaults to 16.
         """
         super().__init__()
-        mip = max(8, inp // reduction)
-        
+        mip = max(8, c1 // reduction)
+
         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
-        
-        self.conv1 = nn.Conv2d(inp, mip, kernel_size=1, stride=1, padding=0)
+
+        self.conv1 = nn.Conv2d(c1, mip, 1, 1, 0, bias=False)
         self.bn1 = nn.BatchNorm2d(mip)
-        self.act = h_swish()
-        
-        self.conv_h = nn.Conv2d(mip, inp, kernel_size=1, stride=1, padding=0)
-        self.conv_w = nn.Conv2d(mip, inp, kernel_size=1, stride=1, padding=0)
+        self.act = nn.Hardswish(inplace=True)
+
+        self.conv_h = nn.Conv2d(mip, c1, 1, 1, 0, bias=False)
+        self.conv_w = nn.Conv2d(mip, c1, 1, 1, 0, bias=False)
 
     def forward(self, x):
-        """Apply coordinate attention to directionally encode spatial features.
+        """Apply positionally-guided directional attention weights to input tensor.
 
         Args:
             x (torch.Tensor): Input tensor.
 
         Returns:
-            (torch.Tensor): Positionally-attended output tensor.
+            (torch.Tensor): Coordinate-attended output tensor.
         """
         identity = x
         n, c, h, w = x.size()
 
         x_h = self.pool_h(x)
         x_w = self.pool_w(x).permute(0, 1, 3, 2)
-        y = torch.cat([x_h, x_w], dim=2)
 
-        y = self.conv1(y)
-        y = self.bn1(y)
-        y = self.act(y)
+        y = self.conv1(torch.cat([x_h, x_w], dim=2))
+        y = self.act(self.bn1(y))
 
         x_h, x_w = torch.split(y, [h, w], dim=2)
         x_w = x_w.permute(0, 1, 3, 2)
 
         a_h = torch.sigmoid(self.conv_h(x_h))
         a_w = torch.sigmoid(self.conv_w(x_w))
-        return identity * a_w * a_h
+
+        return identity * a_h * a_w
 
 
 class Concat(nn.Module):

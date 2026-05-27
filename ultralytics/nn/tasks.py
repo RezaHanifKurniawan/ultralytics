@@ -73,9 +73,9 @@ from ultralytics.nn.modules import (
     YOLOESegment26,
     v10Detect,
     CBAM,
-    CoordinateAttention,
+    CoordAtt,
     GAM,
-    SANet,
+    SEBlock,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, SETTINGS, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import REMOTE_FILE_PREFIXES, check_file, check_requirements, check_suffix, check_yaml
@@ -1635,9 +1635,9 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             A2C2f,
             CBAM,
-            CoordinateAttention,
             GAM,
-            SANet,
+            CoordAtt,
+            SEBlock,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1674,16 +1674,16 @@ def parse_model(d, ch, verbose=True):
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
         if m in base_modules:
             c1, c2 = ch[f], args[0]
-            if m in (CBAM, CoordinateAttention, GAM, SANet):
-                c2 = c1
-                args = [c1, *args]
             if c2 != nc:  # if c2 != nc (e.g., Classify() output)
                 c2 = make_divisible(min(c2, max_channels) * width, 8)
             if m is C2fAttn:  # set 1) embed channels and 2) num heads
                 args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
                 args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
-
-            args = [c1, c2, *args[1:]]
+            if m in (CBAM, CoordinateAttention, GAM, SANet):
+                c2=c1
+                args = [c1, *args]
+            else:
+                args = [c1, c2, *args[1:]]
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1
