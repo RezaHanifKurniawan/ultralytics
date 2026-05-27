@@ -1659,6 +1659,14 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
         }
     )
+    attention_modules = frozenset(
+        {
+            CoordAtt,
+            CBAM,
+            GAM,
+            SEBlock,
+        }
+    )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
         m = (
             getattr(torch.nn, m[3:])
@@ -1679,9 +1687,9 @@ def parse_model(d, ch, verbose=True):
             if m is C2fAttn:  # set 1) embed channels and 2) num heads
                 args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
                 args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
-            if m in (CBAM, CoordinateAttention, GAM, SANet):
-                c2=c1
-                args = [c1, *args]
+            if m in frozenset({CBAM, CoordAtt, GAM, SEBlock}):
+                c2 = c1
+                args = [c1, *args[1:]]
             else:
                 args = [c1, c2, *args[1:]]
             if m in repeat_modules:
