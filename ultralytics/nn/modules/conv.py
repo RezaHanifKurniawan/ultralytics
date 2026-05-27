@@ -702,7 +702,7 @@ class GAM(nn.Module):
         Liu et al., 2021 (https://arxiv.org/abs/2112.05561)
     """
 
-    def __init__(self, c1, reduction=16, kernel_size=3):
+    def __init__(self, c1, reduction=16, kernel_size=7):
         """Initialize Global Attention Mechanism module.
 
         Args:
@@ -718,12 +718,13 @@ class GAM(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(mid, c1)
         )
-
+        assert kernel_size in {3, 7}, "kernel size must be 3 or 7"
+        padding = kernel_size // 2
         self.spatial_attention = nn.Sequential(
-            nn.Conv2d(c1, mid, kernel_size, padding=1, bias=False),
+            nn.Conv2d(c1, mid, kernel_size, padding=padding, bias=False),
             nn.BatchNorm2d(mid),
             nn.ReLU(inplace=True),
-            nn.Conv2d(mid, c1, kernel_size, padding=1, bias=False),
+            nn.Conv2d(mid, c1, kernel_size, padding=padding, bias=False),
             nn.BatchNorm2d(c1)
         )
         self.act = nn.Sigmoid()
