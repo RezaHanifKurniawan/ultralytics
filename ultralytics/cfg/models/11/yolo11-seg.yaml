@@ -32,19 +32,19 @@ backbone:
 # YOLO11s head
 head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 11: Upsample P5 ke resolusi P4
-  - [[-1, 6], 1, Concat, [1]]                  # 12: cat backbone P4 (Gabung layer 11 + layer 6)
+  - [[-1, 6], 1, Concat, [1]]                  # 12: Gabung fitur Head 11 + Backbone P4 (layer 6)
   - [-1, 2, C3k2, [512, False]]                # 13: Blok konvolusi jalur Neck P4
 
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 14: Upsample P4 ke resolusi P3
-  - [[-1, 4], 1, Concat, [1]]                  # 15: cat backbone P3 (Gabung layer 14 + layer 4)
+  - [[-1, 4], 1, Concat, [1]]                  # 15: Gabung fitur Head 14 + Backbone P3 (layer 4)
   - [-1, 2, C3k2, [256, False]]                # 16: Blok konvolusi jalur Neck P3 (P3/8-small)
 
   - [-1, 1, Conv, [256, 3, 2]]                 # 17: Downsample fitur P3 ke P4
-  - [[-1, 13], 1, Concat, [1]]                  # 18: cat head P4 (Gabung layer 17 + layer 13)
+  - [[-1, 13], 1, Concat, [1]]                 # 18: Gabung fitur Head 17 + Neck P4 (layer 13)
   - [-1, 2, C3k2, [512, False]]                # 19: Blok konvolusi jalur Neck P4 (P4/16-medium)
 
   - [-1, 1, Conv, [512, 3, 2]]                 # 20: Downsample fitur P4 ke P5
-  - [[-1, 10], 1, Concat, [1]]                 # 21: cat head P5 (Gabung layer 20 + layer 10)
+  - [[-1, 10], 1, Concat, [1]]                 # 21: Gabung fitur Head 20 + Backbone Output P5 (layer 10)
   - [-1, 2, C3k2, [1024, True]]                # 22: Blok konvolusi jalur Neck P5 (P5/32-large)
 
   - [[16, 19, 22], 1, Segment, [nc, 32, 256]]  # 23: Segmentasi Masker multi-skala (P3, P4, P5)

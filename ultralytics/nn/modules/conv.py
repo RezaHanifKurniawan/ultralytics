@@ -633,14 +633,12 @@ class CBAM(nn.Module):
     Sequentially applies channel attention and spatial attention for adaptive feature refinement.
 
     Attributes:
-        avg_pool_c (nn.AdaptiveAvgPool2d): Global average pooling for channel attention.
-        max_pool_c (nn.AdaptiveMaxPool2d): Global max pooling for channel attention.
         shared_mlp (nn.Sequential): Bottleneck architecture for channel feature aggregation.
         spatial_conv (nn.Conv2d): Large receptive field convolution for spatial maps.
         act (nn.Sigmoid): Sigmoid activation for attention maps.
 
     References:
-        Woo et al., 2018 (https://arxiv.org/abs/1807.06521)
+        Woo et al., 2018 (https://arxiv.org)
     """
 
     def __init__(self, c1, reduction=16, kernel_size=7):
@@ -654,8 +652,6 @@ class CBAM(nn.Module):
         super().__init__()
         mid = max(8, c1 // reduction)
 
-        self.avg_pool_c = nn.AdaptiveAvgPool2d(1)
-        self.max_pool_c = nn.AdaptiveMaxPool2d(1)
         self.shared_mlp = nn.Sequential(
             nn.Conv2d(c1, mid, 1, 1, 0, bias=False),
             nn.ReLU(inplace=True),
@@ -676,13 +672,20 @@ class CBAM(nn.Module):
         Returns:
             (torch.Tensor): Sequentially refined output tensor.
         """
-        avg_out = self.shared_mlp(self.avg_pool_c(x))
-        max_out = self.shared_mlp(self.max_pool_c(x))
+        # Channel Attention
+        avg_pool = torch.mean(x, dim=(2, 3), keepdim=True)
+        max_pool = torch.amax(x, dim=(2, 3), keepdim=True)
+        
+        avg_out = self.shared_mlp(avg_pool)
+        max_out = self.shared_mlp(max_pool)
+        
         channel_attention = self.act(avg_out + max_out)
         x_c = x * channel_attention
 
+        # Spatial Attention
         avg_spatial = torch.mean(x_c, dim=1, keepdim=True)
         max_spatial = torch.max(x_c, dim=1, keepdim=True)[0]
+        
         spatial_attention = self.act(self.spatial_conv(torch.cat([avg_spatial, max_spatial], dim=1)))
 
         return x_c * spatial_attention
@@ -708,7 +711,7 @@ class GAM(nn.Module):
         Args:
             c1 (int): Number of input channels.
             reduction (int): Channel reduction ratio. Defaults to 16.
-            kernel_size (int): Receptive field size for spatial adaptation. Defaults to 3.
+            kernel_size (int): Receptive field size for spatial adaptation. Defaults to 7.
         """
         super().__init__()
         mid = max(8, c1 // reduction)
@@ -739,13 +742,17 @@ class GAM(nn.Module):
             (torch.Tensor): Globally-attended output tensor.
         """
         b, c, h, w = x.shape
-
+        
+        # Channel Attention
         x_permute = x.permute(0, 2, 3, 1).reshape(b, -1, c)
         c_att = self.channel_attention(x_permute)
         c_att = c_att.reshape(b, h, w, c).permute(0, 3, 1, 2)
         x_c = x * self.act(c_att)
+        
+        # Spatial Attention
+        spatial_attention = self.act(self.spatial_attention(x_c))
 
-        return x_c * self.act(self.spatial_attention(x_c))
+        return x_c * spatial_attention
 
 
 class CoordAtt(nn.Module):
@@ -754,8 +761,6 @@ class CoordAtt(nn.Module):
     Embeds positional coordinate signals into channel attention maps for mobile designs.
 
     Attributes:
-        pool_h (nn.AdaptiveAvgPool2d): Vertical coordinate-aware feature pooling.
-        pool_w (nn.AdaptiveAvgPool2d): Horizontal coordinate-aware feature pooling.
         conv1 (nn.Conv2d): Shared transformation layer for unified feature mapping.
         bn1 (nn.BatchNorm2d): Normalization layer for joint horizontal-vertical features.
         act (nn.Hardswish): Non-linear activation for unified spatial mappings.
@@ -770,14 +775,11 @@ class CoordAtt(nn.Module):
         """Initialize Coordinate Attention module.
 
         Args:
-            inp (int): Number of input channels.
+            c1 (int): Number of input channels.
             reduction (int): Downsampling ratio for bottleneck squeeze. Defaults to 16.
         """
         super().__init__()
         mip = max(8, c1 // reduction)
-
-        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
-        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
 
         self.conv1 = nn.Conv2d(c1, mip, 1, 1, 0, bias=False)
         self.bn1 = nn.BatchNorm2d(mip)
@@ -796,14 +798,17 @@ class CoordAtt(nn.Module):
             (torch.Tensor): Coordinate-attended output tensor.
         """
         identity = x
-        n, c, h, w = x.size()
+        b, c, h, w = x.size()
 
-        x_h = self.pool_h(x)
-        x_w = self.pool_w(x).permute(0, 1, 3, 2)
+        # Coordinate Attention
+        x_h = torch.mean(x, dim=3, keepdim=True)
+        x_w = torch.mean(x, dim=2, keepdim=True).permute(0, 1, 3, 2)
 
+        # Spatial Attention
         y = self.conv1(torch.cat([x_h, x_w], dim=2))
         y = self.act(self.bn1(y))
 
+        # Channel Attention
         x_h, x_w = torch.split(y, [h, w], dim=2)
         x_w = x_w.permute(0, 1, 3, 2)
 
