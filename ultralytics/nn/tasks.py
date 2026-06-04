@@ -72,10 +72,13 @@ from ultralytics.nn.modules import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
-    CBAM,
-    CoordAtt,
-    GAM,
     SEBlock,
+    CBAM,
+    GAM,
+    CoordAtt,
+    SimAM,
+    EMA,
+    BiFormer,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, SETTINGS, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import REMOTE_FILE_PREFIXES, check_file, check_requirements, check_suffix, check_yaml
@@ -1634,10 +1637,13 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            SEBlock,
             CBAM,
             GAM,
             CoordAtt,
-            SEBlock,
+            SimAM,
+            EMA,
+            BiFormer,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1657,14 +1663,6 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             A2C2f,
-        }
-    )
-    attention_modules = frozenset(
-        {
-            CoordAtt,
-            CBAM,
-            GAM,
-            SEBlock,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1687,9 +1685,12 @@ def parse_model(d, ch, verbose=True):
             if m is C2fAttn:  # set 1) embed channels and 2) num heads
                 args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
                 args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
-            if m in frozenset({CBAM, CoordAtt, GAM, SEBlock}):
+            if m in {SimAM, BiFormer}:
                 c2 = c1
-                args = [c1, *args[1:]]
+                args = []
+            elif m in {CBAM, CoordAtt, GAM, EMA, SEBlock}:
+                c2 = c1
+                args = [c1, *args[1:]] # Kirim channel untuk yang butuh
             else:
                 args = [c1, c2, *args[1:]]
             if m in repeat_modules:

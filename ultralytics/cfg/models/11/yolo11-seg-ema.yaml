@@ -37,7 +37,7 @@ head:
 
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 14
   - [[-1, 4], 1, Concat, [1]] # 15 cat backbone P3
-  - [-1, 1, GAM, [1024]] # 16
+  - [-1, 1, EMA, [1024]] # 16
   - [-1, 2, C3k2, [256, False]] # 17 (P3/8-small)
 
   - [-1, 1, Conv, [256, 3, 2]] # 18
