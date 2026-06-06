@@ -1637,13 +1637,6 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
-            SEBlock,
-            CBAM,
-            GAM,
-            CoordAtt,
-            SimAM,
-            EMA,
-            BiFormer,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1685,14 +1678,8 @@ def parse_model(d, ch, verbose=True):
             if m is C2fAttn:  # set 1) embed channels and 2) num heads
                 args[1] = make_divisible(min(args[1], max_channels // 2) * width, 8)
                 args[2] = int(max(round(min(args[2], max_channels // 2 // 32)) * width, 1) if args[2] > 1 else args[2])
-            if m in {SimAM, BiFormer}:
-                c2 = c1
-                args = []
-            elif m in {CBAM, CoordAtt, GAM, EMA, SEBlock}:
-                c2 = c1
-                args = [c1, *args[1:]] # Kirim channel untuk yang butuh
-            else:
-                args = [c1, c2, *args[1:]]
+                
+            args = [c1, c2, *args[1:]]
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1
@@ -1706,6 +1693,9 @@ def parse_model(d, ch, verbose=True):
                     args.extend((True, 1.2))
             if m is C2fCIB:
                 legacy = False
+        elif m in {SEBlock, CBAM, GAM, EMA, CoordAtt, SimAM, BiFormer}:
+            c2 = ch[f]
+            args = [c2, *args]
         elif m is AIFI:
             args = [ch[f], *args]
         elif m in frozenset({HGStem, HGBlock}):
