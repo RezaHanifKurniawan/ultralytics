@@ -80,7 +80,6 @@ from .conv import (
     CoordAtt,
     SimAM,
     EMA,
-    BiFormer,
 )
 from .head import (
     OBB,
@@ -198,5 +197,4 @@ __all__ = (
     "CoordAtt",
     "SimAM",
     "EMA",
-    "BiFormer",
 )

@@ -78,7 +78,6 @@ from ultralytics.nn.modules import (
     CoordAtt,
     SimAM,
     EMA,
-    BiFormer,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, SETTINGS, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import REMOTE_FILE_PREFIXES, check_file, check_requirements, check_suffix, check_yaml
@@ -1693,7 +1692,7 @@ def parse_model(d, ch, verbose=True):
                     args.extend((True, 1.2))
             if m is C2fCIB:
                 legacy = False
-        elif m in {SEBlock, CBAM, GAM, EMA, CoordAtt, SimAM, BiFormer}:
+        elif m in {SEBlock, CBAM, GAM, EMA, CoordAtt, SimAM}:
             c2 = ch[f]
             args = [c2, *args]
         elif m is AIFI:

@@ -29,7 +29,6 @@ __all__ = (
     "CoordAtt",
     "SimAM",
     "EMA",
-    "BiFormer",
 )
 
 
@@ -894,72 +893,6 @@ class EMA(nn.Module):
 
         return out.view(b, c, h, w)                                             # Mengembalikan bentuk tensor ke format 4D semula
     
-
-class BiFormer(nn.Module):
-    """Bi-Level Routing Attention (BRA).
-
-    Preserves global cross-dimension interactions without spatial information loss
-    by dynamically routing attention queries to the most relevant regional keys.
-
-    Attributes:
-        c2 (int): Number of output channels matched to the input tensor.
-        n_win (int): Number of windows for local block partitioning.
-        num_heads (int): Number of multi-head self-attention paths.
-        topk (int): Number of top-k regions selected by the dynamic router.
-
-    References:
-        Zhu et al., 2023 (https://arxiv.org/abs/2303.08810)
-    """
-
-    def __init__(self, c1, c2=None, n_win=7, num_heads=8, topk=4):
-        """Initialize Bi-Level Routing Attention module."""
-        super().__init__()
-        self.c2 = c2 if c2 is not None else c1
-        self.n_win = n_win
-        self.num_heads = num_heads
-        self.topk = topk
-        
-        self.proj_in = nn.Conv2d(c1, self.c2, kernel_size=1) if c1 != self.c2 else nn.Identity()
-        self.qkv = nn.Conv2d(self.c2, self.c2 * 3, kernel_size=1)
-        self.proj_out = nn.Conv2d(self.c2, self.c2, kernel_size=1)
-        
-        self.router_conv = nn.Sequential(
-            nn.Conv2d(self.c2, self.c2, kernel_size=3, padding=1, groups=self.c2),
-            nn.GELU(),
-            nn.Conv2d(self.c2, self.c2, kernel_size=1)
-        )
-        
-    def forward(self, x):
-        """Apply dynamic sparse routing attention across the spatial domain."""
-        x = self.proj_in(x)                                                     # Penyesuaian dimensi awal saluran jika ada perbedaan
-        B, C, H, W = x.shape
-        
-        qkv = self.qkv(x)                                                       # Transformasi fitur linear untuk membangkitkan QKV
-        q, k, v = torch.chunk(qkv, 3, dim=1)                                    # Pemisahan matriks tensor menjadi komponen Q, K, dan V
-        
-        r_h, r_w = H // self.n_win, W // self.n_win
-        if r_h > 0 and r_w > 0:
-            q_reg = F.adaptive_avg_pool2d(q, (self.n_win, self.n_win))          # Kompresi wilayah query berdasarkan ukuran jendela
-            k_reg = F.adaptive_avg_pool2d(k, (self.n_win, self.n_win))          # Kompresi wilayah key berdasarkan ukuran jendela
-        else:
-            q_reg, k_reg = q, k
-            
-        q_reg = self.router_conv(q_reg)                                         # Ekstraksi korelasi lokal regional melalui konvolusi
-        
-        q_reg_flat = q_reg.flatten(2).transpose(1, 2)                           # Perataan dimensi spasial regional untuk query
-        k_reg_flat = k_reg.flatten(2)                                           # Perataan dimensi spasial regional untuk key
-        attn_reg = torch.matmul(q_reg_flat, k_reg_flat)                         # Perkalian titik matriks korelasi antar wilayah rahang
-        
-        actual_topk = min(self.topk, attn_reg.size(-1))
-        _, indices = torch.topk(attn_reg, actual_topk, dim=-1)                  # Pemilihan koordinat wilayah dengan tumpang tindih tertinggi
-        
-        mask = torch.zeros_like(attn_reg).scatter_(-1, indices, 1.0)            # Pembuatan masker biner berdasarkan indeks koordinat top-k
-        mask_spatial = F.interpolate(mask.unsqueeze(1), size=(H, W), mode='nearest').squeeze(1)
-        
-        if mask_spatial.shape[-2:] == v.shape[-2:]:
-            v_weighted = v * mask_spatial.mean(dim=1, keepdim=True).softmax(dim=-1) # Multiplikasi bobot wilayah dinamis ke komponen value (V)
-        else:
-            v_weighted = v
 
 class Concat(nn.Module):
     """Concatenate a list of tensors along specified dimension.
